@@ -7,14 +7,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 )
 
 var size chan int64
 
 type ReqParam struct {
-	Dirs string
+	Directories []string `json:"directories"`
 }
 
 func main() {
@@ -26,12 +25,10 @@ func main() {
 		var p ReqParam
 		json.NewDecoder(r.Body).Decode(&p)
 
-		directories := strings.Split(p.Dirs, ",")
-
 		var wg sync.WaitGroup
-		wg.Add(len(directories))
+		wg.Add(len(p.Directories))
 
-		for _, directory := range directories {
+		for _, directory := range p.Directories {
 			go func(dir string) {
 				defer wg.Done()
 				walkDir(dir)
