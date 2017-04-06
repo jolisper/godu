@@ -3,81 +3,85 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 )
 
-var size chan int64
-
-type ReqParam struct {
+type Request struct {
 	Directories []string `json:"directories"`
 }
 
 type Response struct {
-	Sizes map[string]string `json:"sizes"`
-	Total int64             `json:"total"`
+	Directories   []string `json:"directories"`
+	TotalSize     float64  `json:"totalSize"`
+	UnitOfMeasure string   `json:"unitOfMeasure"`
 }
 
 func main() {
 
 	http.HandleFunc("/size", func(rw http.ResponseWriter, r *http.Request) {
-		size = make(chan int64)
-		defer close(size)
-
-		var p ReqParam
+		// Payload decoding
+		var p Request
 		json.NewDecoder(r.Body).Decode(&p)
 
+		// A Go rutine for every directory
 		var wg sync.WaitGroup
 		wg.Add(len(p.Directories))
 
+		csize := make(chan int64)
 		for _, directory := range p.Directories {
 			go func(dir string) {
 				defer wg.Done()
-				walkDir(dir, size)
+				walkDir(dir, csize)
 			}(directory)
 		}
 
-		var total int64
-
-		sizes := make(map[string]string)
+		// Total calculation
+		ctotal := make(chan int64)
 		go func() {
-			defer wg.Done()
-			for s := range size {
-				sizes[strconv.Itoa(rand.Int())] = strconv.Itoa(int(s))
+			var total int64
+			for s := range csize {
 				total += s
 			}
+			ctotal <- total
+			close(ctotal)
 		}()
+
 		wg.Wait()
+		close(csize)
 
-		resp := Response{Sizes: sizes, Total: total}
+		// Response payload building
+		response := Response{
+			Directories:   p.Directories,
+			TotalSize:     float64(<-ctotal),
+			UnitOfMeasure: "bytes",
+		}
 
-		fmt.Println(total)
-		fmt.Println(float32(total) / 1e9)
-		fmt.Println(resp.Total)
+		js, err := json.Marshal(response)
+		if err != nil {
+			http.Error(rw, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
-		sresp, _ := json.Marshal(resp)
-		io.WriteString(rw, string(sresp))
-		//string(sresp)
-
-		//		fmt.Fprintf(rw, "%.2f GB\n", float32(total)/1e9)
+		// Response sending
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(200)
+		rw.Write(js)
 	})
 
 	fmt.Println(http.ListenAndServe(":8080", nil))
 }
 
-func walkDir(dirname string, size chan int64) {
+func walkDir(dirname string, csize chan int64) {
 	for _, entry := range dirents(dirname) {
 		if entry.IsDir() {
 			subdir := filepath.Join(dirname, entry.Name())
-			walkDir(subdir, size)
+			walkDir(subdir, csize)
 		} else {
-			size <- entry.Size()
+			csize <- entry.Size()
 		}
 	}
 }
