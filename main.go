@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -22,36 +23,28 @@ type Response struct {
 
 func main() {
 
+	httpMode := flag.Bool("http-mode", false, "Start a web server, send the query via http: curl -X POST localhost:8080/size -d '{ \"directories\": [\"/my/directory\"] }'")
+	flag.Parse()
+
+	if *httpMode {
+		httpModeBehaviour()
+	} else {
+		commandModeBehaviour()
+	}
+
+}
+
+func httpModeBehaviour() {
 	http.HandleFunc("/size", func(rw http.ResponseWriter, r *http.Request) {
 		// Payload decoding
 		var p Request
 		json.NewDecoder(r.Body).Decode(&p)
 
-		// A Go rutine for every directory
-		var wg sync.WaitGroup
-		wg.Add(len(p.Directories))
-
-		csize := make(chan int64)
-		for _, directory := range p.Directories {
-			go func(dir string) {
-				defer wg.Done()
-				walkDir(dir, csize)
-			}(directory)
+		ctotal, err := calculateSize(p.Directories)
+		if err != nil {
+			http.Error(rw, err.Error(), http.StatusInternalServerError)
+			return
 		}
-
-		// Total calculation
-		ctotal := make(chan int64)
-		go func() {
-			var total int64
-			for s := range csize {
-				total += s
-			}
-			ctotal <- total
-			close(ctotal)
-		}()
-
-		wg.Wait()
-		close(csize)
 
 		// Response payload building
 		response := Response{
@@ -73,6 +66,59 @@ func main() {
 	})
 
 	fmt.Println(http.ListenAndServe(":8080", nil))
+}
+
+func commandModeBehaviour() {
+	if len(os.Args) <= 1 {
+		fmt.Fprintln(os.Stderr, "usage: godu directory ...")
+	}
+
+	csize, err := calculateSize(os.Args[1:])
+	if err != nil {
+		fmt.Fprint(os.Stderr, err.Error())
+		return
+	}
+
+	unitOfMeasure := "bytes"
+
+	fmt.Fprintf(os.Stdout, "%d %s\n", <-csize, unitOfMeasure)
+}
+
+func calculateSize(directories []string) (chan int64, error) {
+	var wg sync.WaitGroup
+	wg.Add(len(directories))
+
+	sizeCalculation := func(directory string, csize chan int64) {
+		walkDir(directory, csize)
+		wg.Done()
+	}
+
+	// A Go rutine for every directory argument
+	csizes := make(chan int64)
+	for _, directory := range directories {
+		go sizeCalculation(directory, csizes)
+	}
+
+	// Total size calculation
+	totalSizeCalculation := func(csizes chan int64, ctotal chan int64) {
+		var total int64
+		for s := range csizes {
+			total += s
+		}
+		ctotal <- total
+		close(ctotal)
+	}
+
+	ctotal := make(chan int64)
+	go totalSizeCalculation(csizes, ctotal)
+
+	// Wait in other go rutine to not block here
+	go func() {
+		wg.Wait()
+		close(csizes)
+	}()
+
+	return ctotal, nil
 }
 
 func walkDir(dirname string, csize chan int64) {
