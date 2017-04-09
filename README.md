@@ -11,6 +11,6 @@ $ godu /my/dir1/ /my/dir2/
 ```bash
 $ godu --http-mode
 $ curl -X POST localhost:8080/size -d '{ "directories": [ "/my/dir1/", "/my/dir2/" ] }'
-{"directories":["/Users/jolisper/"],"totalSize":123456,"unitOfMeasure":"bytes"}
+{"directories":["/my/dir1/", "/my/dir2/"],"totalSize":123456,"unitOfMeasure":"bytes"}
 ```
 
