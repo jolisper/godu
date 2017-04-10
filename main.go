@@ -31,7 +31,6 @@ func main() {
 	} else {
 		commandModeBehaviour()
 	}
-
 }
 
 func httpModeBehaviour() {
@@ -71,6 +70,7 @@ func httpModeBehaviour() {
 func commandModeBehaviour() {
 	if len(os.Args) <= 1 {
 		fmt.Fprintln(os.Stderr, "usage: godu directory ...")
+		os.Exit(1)
 	}
 
 	csize, err := calculateSize(os.Args[1:])
